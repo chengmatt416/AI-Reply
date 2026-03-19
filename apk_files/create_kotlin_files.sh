@@ -354,7 +354,13 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
         return runCatching {
             val req = Request.Builder().url(url).post(body.toRequestBody("application/json".toMediaType())).build()
             val txt = http.newCall(req).execute().body?.string() ?: return fallback()
-            val content = JSONObject(txt).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
+            val json = JSONObject(txt)
+            val choices = json.optJSONArray("choices") ?: return fallback()
+            if (choices.length() == 0) return fallback()
+            val choice = choices.optJSONObject(0) ?: return fallback()
+            val message = choice.optJSONObject("message") ?: return fallback()
+            val content = message.optString("content", "").trim()
+            if (content.isEmpty()) return fallback()
             parseAi(content)
         }.getOrElse { fallback() }
     }
