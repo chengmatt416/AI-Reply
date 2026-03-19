@@ -47,6 +47,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Chat overlay assistant"/>
         </service>
+        <service
+            android:name=".InferenceService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="LLM inference engine"/>
+        </service>
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

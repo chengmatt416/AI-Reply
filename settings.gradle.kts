@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "ChatAssistant"
 include(":app")
+include(":llama-lib")
