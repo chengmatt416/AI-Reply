@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 b.tvLlmStatus.text = if (ok) "✓ 已連線" else "無法連線"
                 b.tvLlmStatus.setTextColor(if (ok) 0xFF03DAC5.toInt() else 0xFFFF6B6B.toInt())
-                b.dotLlm.background = ContextCompat.getDrawable(this, if (ok) R.drawable.dot_green else R.drawable.dot_red)
+                b.dotLlm.background = ContextCompat.getDrawable(this@MainActivity, if (ok) R.drawable.dot_green else R.drawable.dot_red)
             }
         }
     }
