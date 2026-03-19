@@ -1,0 +1,570 @@
+package com.chatassistant
+
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.google.android.material.card.MaterialCardView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.TimeUnit
+
+class FloatingService : Service() {
+    companion object {
+        const val ACTION_START = "START"
+    }
+    private lateinit var wm: WindowManager
+    private lateinit var root: FrameLayout
+    private lateinit var params: WindowManager.LayoutParams
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private lateinit var card: MaterialCardView
+    private lateinit var statusLabel: TextView
+    private lateinit var loadingBar: ProgressBar
+    private lateinit var contentArea: LinearLayout
+    private lateinit var chipRow: LinearLayout
+    private lateinit var actionRow: LinearLayout
+    private val prefs: SharedPreferences by lazy { getSharedPreferences("assistant_prefs", MODE_PRIVATE) }
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .build()
+    private var inputTop = 0
+    private var screenH = 0
+    private var isExpanded = true
+
+    data class Ai(val replies: List<String>, val actions: List<Act>)
+    data class Act(
+        val type: String,
+        val title: String = "",
+        val date: String = "",
+        val time: String = "",
+        val label: String = ""
+    )
+
+    override fun onCreate() {
+        super.onCreate()
+        notif()
+        screenH = resources.displayMetrics.heightPixels
+        buildOverlay()
+    }
+
+    override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+        when (i?.action) {
+            ACTION_START -> show()
+            ChatAccessibilityService.ACTION_UPDATE_POS -> {
+                inputTop = i.getIntExtra("input_top", inputTop)
+                updatePos()
+                show()
+            }
+            ChatAccessibilityService.ACTION_NEW_CONTENT -> {
+                val c = i.getStringExtra("content") ?: return START_STICKY
+                show()
+                if (isExpanded) generate(c, i.getStringExtra("pkg") ?: "")
+            }
+        }
+        return START_STICKY
+    }
+
+    override fun onBind(i: Intent?) = null
+
+    override fun onDestroy() {
+        scope.cancel()
+        runCatching { wm.removeView(root) }
+        super.onDestroy()
+    }
+
+    private fun buildOverlay() {
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        root = FrameLayout(this)
+        params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            y = 200
+        }
+        buildUI()
+        wm.addView(root, params)
+        root.visibility = View.GONE
+    }
+
+    private fun buildUI() {
+        val dp = resources.displayMetrics.density
+        fun Int.dp() = (this * dp).toInt()
+
+        card = MaterialCardView(this).apply {
+            radius = 22f * dp
+            strokeWidth = 1.dp()
+            strokeColor = 0x33FFFFFF
+            setCardBackgroundColor(0xCC0D1117.toInt())
+            cardElevation = 8f * dp
+            useCompatPadding = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            card.setRenderEffect(
+                android.graphics.RenderEffect.createBlurEffect(16f, 16f, android.graphics.Shader.TileMode.CLAMP)
+            )
+        }
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14.dp(), 10.dp(), 14.dp(), 12.dp())
+        }
+        val hdr = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val dot = View(this).apply {
+            background = ContextCompat.getDrawable(context, R.drawable.dot_green)
+            layoutParams = LinearLayout.LayoutParams(8.dp(), 8.dp()).apply { marginEnd = 8.dp() }
+        }
+        statusLabel = TextView(this).apply {
+            text = "✦ AI 回覆助理"
+            textSize = 13f
+            setTextColor(0xE0FFFFFFu.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val colBtn = ImageView(this).apply {
+            setImageResource(android.R.drawable.arrow_down_float)
+            setColorFilter(0x80FFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(24.dp(), 24.dp()).apply { marginStart = 6.dp() }
+            setOnClickListener { toggleExpand() }
+        }
+        val closeBtn = ImageView(this).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            setColorFilter(0x60FFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(24.dp(), 24.dp()).apply { marginStart = 6.dp() }
+            setOnClickListener { hide() }
+        }
+        hdr.addView(dot)
+        hdr.addView(statusLabel)
+        hdr.addView(colBtn)
+        hdr.addView(closeBtn)
+
+        loadingBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(0xFFA78BFA.toInt())
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2.dp())
+        }
+        val div = View(this).apply {
+            setBackgroundColor(0x1AFFFFFF)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                topMargin = 8.dp()
+                bottomMargin = 8.dp()
+            }
+        }
+        contentArea = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        chipRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        actionRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        contentArea.addView(chipRow)
+        contentArea.addView(actionRow)
+        inner.addView(hdr)
+        inner.addView(loadingBar)
+        inner.addView(div)
+        inner.addView(contentArea)
+        card.addView(inner)
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            leftMargin = 12.dp()
+            rightMargin = 12.dp()
+            bottomMargin = 4.dp()
+        }
+        root.addView(card, lp)
+    }
+
+    private fun generate(chat: String, pkg: String) {
+        loadingBar.visibility = View.VISIBLE
+        statusLabel.text = "⏳ 生成中..."
+        chipRow.removeAllViews()
+        actionRow.removeAllViews()
+        scope.launch {
+            val cal = calCtx()
+            val result = withContext(Dispatchers.IO) { callLlm(chat, pkg, cal) }
+            loadingBar.visibility = View.GONE
+            statusLabel.text = "✦ AI 回覆助理"
+            render(result)
+        }
+    }
+
+    private fun callLlm(chat: String, pkg: String, cal: String): Ai {
+        val app = mapOf(
+            "com.tencent.mm" to "WeChat",
+            "com.linecorp.line" to "LINE",
+            "jp.naver.line.android" to "LINE",
+            "org.telegram.messenger" to "Telegram",
+            "com.whatsapp" to "WhatsApp",
+            "com.facebook.orca" to "Messenger",
+            "com.instagram.android" to "Instagram",
+            "com.discord" to "Discord"
+        )[pkg] ?: "Chat"
+        val sys = """你是智慧回覆助理。日曆：$cal
+輸出嚴格JSON（不含markdown）：{"replies":["回覆1","回覆2","回覆3"],"actions":[]}
+actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_calendar","title":"","date":"yyyy-MM-dd","time":"HH:mm"}
+僅在明確提到時間/行程時才填actions，否則[]。replies語言跟對話一致，簡短自然。"""
+        val body = JSONObject().apply {
+            put("messages", JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", sys))
+                put(JSONObject().put("role", "user").put("content", "$app 對話：\n$chat"))
+            })
+            put("max_tokens", prefs.getInt("max_tokens", 256))
+            put("temperature", 0.75)
+            put("stream", false)
+        }.toString()
+        val url = prefs.getString("server_url", "http://127.0.0.1:8080") + "/v1/chat/completions"
+        return runCatching {
+            val req = Request.Builder()
+                .url(url)
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            val txt = http.newCall(req).execute().body?.string() ?: return fallback()
+            val json = JSONObject(txt)
+            val choices = json.optJSONArray("choices") ?: return fallback()
+            if (choices.length() == 0) return fallback()
+            val choice = choices.optJSONObject(0) ?: return fallback()
+            val message = choice.optJSONObject("message") ?: return fallback()
+            val content = message.optString("content", "").trim()
+            if (content.isEmpty()) return fallback()
+            parseAi(content)
+        }.getOrElse { fallback() }
+    }
+
+    private fun parseAi(json: String): Ai {
+        return runCatching {
+            val o = JSONObject(json)
+            val repliesArray = o.optJSONArray("replies") ?: return fallback()
+            val rep = (0 until repliesArray.length()).map { repliesArray.getString(it) }
+            val acts = mutableListOf<Act>()
+            o.optJSONArray("actions")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val a = arr.optJSONObject(i) ?: continue
+                    acts.add(
+                        Act(
+                            a.optString("type"),
+                            a.optString("title"),
+                            a.optString("date"),
+                            a.optString("time"),
+                            a.optString("label")
+                        )
+                    )
+                }
+            }
+            Ai(rep, acts)
+        }.getOrElse { fallback() }
+    }
+
+    private fun fallback() = Ai(listOf("好的", "收到！", "了解 👍"), emptyList())
+
+    private fun render(ai: Ai) {
+        chipRow.removeAllViews()
+        actionRow.removeAllViews()
+        val colors = listOf(0x26A78BFA, 0x261E40FF, 0x26818CF8)
+        val borders = listOf(0x4DA78BFA, 0x4D1E40FF, 0x4D818CF8)
+        val textClrs = listOf(0xCCA78BFA.toInt(), 0xCC94A3F8.toInt(), 0xCC818CF8.toInt())
+        val dp = resources.displayMetrics.density
+        fun Int.dp() = (this * dp).toInt()
+
+        ai.replies.forEachIndexed { i, reply ->
+            val tv = TextView(this).apply {
+                text = reply
+                textSize = 13.5f
+                setTextColor(textClrs.getOrElse(i) { 0xCCFFFFFF.toInt() })
+                setPadding(16.dp(), 10.dp(), 16.dp(), 10.dp())
+                background = rounded(
+                    colors.getOrElse(i) { 0x26FFFFFF },
+                    borders.getOrElse(i) { 0x33FFFFFF },
+                    18.dp().toFloat()
+                )
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = 5.dp() }
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setOnClickListener { copyText(reply); pulse(this) }
+            }
+            chipRow.addView(tv)
+            tv.alpha = 0f
+            tv.translationY = 12f
+            tv.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay((i * 60).toLong())
+                .setDuration(220)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
+        actionRow.visibility = if (ai.actions.isEmpty()) View.GONE else View.VISIBLE
+        ai.actions.forEachIndexed { i, act ->
+            val (em, lbl) = when (act.type) {
+                "add_calendar" -> "📅" to "加入日曆：${act.title} ${act.date} ${act.time}"
+                "add_alarm" -> "⏰" to "設定鬧鐘：${act.time} ${act.label}"
+                else -> "▶" to act.type
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(14.dp(), 10.dp(), 14.dp(), 10.dp())
+                background = rounded(0x20FFD700, 0x40FFD700, 16.dp().toFloat())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = 5.dp() }
+                addView(TextView(context).apply { text = em; textSize = 16f; setPadding(0, 0, 10.dp(), 0) })
+                addView(TextView(context).apply {
+                    text = lbl
+                    textSize = 12.5f
+                    setTextColor(0xCCFFD700.toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                setOnClickListener { doAction(act) }
+            }
+            actionRow.addView(row)
+            row.alpha = 0f
+            row.animate()
+                .alpha(1f)
+                .setStartDelay(((ai.replies.size + i) * 60).toLong())
+                .setDuration(200)
+                .start()
+        }
+    }
+
+    private fun rounded(fill: Int, stroke: Int, r: Float) =
+        android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = r
+            setColor(fill)
+            setStroke(1, stroke)
+        }
+
+    private fun updatePos() {
+        if (inputTop <= 0) return
+        params.y = screenH - inputTop + (8 * resources.displayMetrics.density).toInt()
+        if (root.isAttachedToWindow) runCatching { wm.updateViewLayout(root, params) }
+    }
+
+    private fun show() {
+        if (root.visibility == View.VISIBLE) return
+        root.visibility = View.VISIBLE
+        root.alpha = 0f
+        root.translationY = 30f
+        root.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(250)
+            .setInterpolator(DecelerateInterpolator(1.5f))
+            .start()
+    }
+
+    private fun hide() {
+        root.animate()
+            .alpha(0f)
+            .translationY(20f)
+            .setDuration(180)
+            .setInterpolator(AccelerateInterpolator())
+            .withEndAction { root.visibility = View.GONE }
+            .start()
+    }
+
+    private fun toggleExpand() {
+        isExpanded = !isExpanded
+        if (isExpanded) {
+            contentArea.visibility = View.VISIBLE
+            contentArea.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            val h = contentArea.measuredHeight
+            ValueAnimator.ofInt(0, h).apply {
+                duration = 220
+                interpolator = DecelerateInterpolator()
+                addUpdateListener {
+                    contentArea.layoutParams.height = it.animatedValue as Int
+                    contentArea.requestLayout()
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(a: Animator) {
+                        contentArea.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    }
+                })
+            }.start()
+        } else {
+            val h = contentArea.height
+            ValueAnimator.ofInt(h, 0).apply {
+                duration = 180
+                addUpdateListener {
+                    contentArea.layoutParams.height = it.animatedValue as Int
+                    contentArea.requestLayout()
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(a: Animator) {
+                        contentArea.visibility = View.GONE
+                    }
+                })
+            }.start()
+        }
+    }
+
+    private fun pulse(v: View) {
+        ObjectAnimator.ofPropertyValuesHolder(
+            v,
+            PropertyValuesHolder.ofFloat("scaleX", 1f, .96f, 1f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, .96f, 1f)
+        ).apply {
+            duration = 150
+            interpolator = DecelerateInterpolator()
+        }.start()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getSystemService(Vibrator::class.java)?.vibrate(
+                VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+            )
+        }
+    }
+
+    private fun copyText(t: String) {
+        (getSystemService(ClipboardManager::class.java)).setPrimaryClip(ClipData.newPlainText("r", t))
+        Toast.makeText(this, "✓ 已複製", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun doAction(a: Act) {
+        when (a.type) {
+            "add_alarm" -> addAlarm(a)
+            "add_calendar" -> addCal(a)
+        }
+    }
+
+    private fun addAlarm(a: Act) {
+        val p = a.time.split(":").mapNotNull { it.toIntOrNull() }
+        startActivity(Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, p.getOrElse(0) { 8 })
+            putExtra(AlarmClock.EXTRA_MINUTES, p.getOrElse(1) { 0 })
+            putExtra(AlarmClock.EXTRA_MESSAGE, a.label.ifBlank { "助理鬧鐘" })
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        })
+        Toast.makeText(this, "⏰ 已設定鬧鐘 ${a.time}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun addCal(a: Act) {
+        runCatching {
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+            val s = sdf.parse("${a.date} ${a.time}")?.time ?: (System.currentTimeMillis() + 3600000)
+            contentResolver.insert(
+                CalendarContract.Events.CONTENT_URI,
+                android.content.ContentValues().apply {
+                    put(CalendarContract.Events.TITLE, a.title)
+                    put(CalendarContract.Events.DTSTART, s)
+                    put(CalendarContract.Events.DTEND, s + 3600000)
+                    put(CalendarContract.Events.CALENDAR_ID, defCal())
+                    put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
+                }
+            )
+            Toast.makeText(this, "📅 已加入日曆：${a.title}", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            startActivity(Intent(Intent.ACTION_INSERT).apply {
+                data = CalendarContract.Events.CONTENT_URI
+                putExtra(CalendarContract.Events.TITLE, a.title)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            })
+        }
+    }
+
+    private fun defCal(): Long {
+        return contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(CalendarContract.Calendars._ID),
+            "${CalendarContract.Calendars.IS_PRIMARY}=1",
+            null,
+            null
+        )?.use { if (it.moveToFirst()) it.getLong(0) else 1L } ?: 1L
+    }
+
+    private fun calCtx(): String {
+        return runCatching {
+            val c = contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART),
+                "${CalendarContract.Events.DTSTART}>=?",
+                arrayOf(System.currentTimeMillis().toString()),
+                "${CalendarContract.Events.DTSTART} ASC"
+            )
+            val l = mutableListOf<String>()
+            var n = 0
+            c?.use {
+                while (it.moveToNext() && n < 4) {
+                    l.add(
+                        SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+                            .format(Date(it.getLong(1))) + " " + it.getString(0)
+                    )
+                    n++
+                }
+            }
+            if (l.isEmpty()) "無近期行程" else l.joinToString("；")
+        }.getOrDefault("")
+    }
+
+    private fun notif() {
+        val ch = "ca"
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(ch) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(ch, "Chat Assistant", NotificationManager.IMPORTANCE_MIN)
+            )
+        }
+        startForeground(
+            42,
+            NotificationCompat.Builder(this, ch)
+                .setContentTitle("Chat Assistant")
+                .setContentText("AI 回覆助理運行中")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setOngoing(true)
+                .build()
+        )
+    }
+}
