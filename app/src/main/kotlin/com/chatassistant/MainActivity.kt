@@ -1,10 +1,15 @@
 package com.chatassistant
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.net.Uri
 import android.os.Bundle
+import android.os.IBinder
 import android.provider.Settings
+import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -16,12 +21,33 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private lateinit var b: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("assistant_prefs", MODE_PRIVATE) }
-    private val http = OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
+    private var inferenceService: InferenceService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as InferenceService.LocalBinder
+            inferenceService = binder.getService()
+            isBound = true
+            updateModelStatus()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            inferenceService = null
+            isBound = false
+        }
+    }
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
@@ -32,11 +58,25 @@ class MainActivity : AppCompatActivity() {
         loadSettings()
         setupListeners()
         checkStatuses()
+
+        // Bind to InferenceService
+        Intent(this, InferenceService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
     }
 
     override fun onResume() {
         super.onResume()
         checkStatuses()
+        updateModelStatus()
     }
 
     private fun loadSettings() {
@@ -68,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             startForegroundService(Intent(this, FloatingService::class.java).apply { action = FloatingService.ACTION_START })
+            startForegroundService(Intent(this, InferenceService::class.java).apply { action = InferenceService.ACTION_START })
             Toast.makeText(this, "✅ 助理服務已啟動", Toast.LENGTH_SHORT).show()
             b.btnStartService.text = "③ 服務運行中 ✓"
         }
@@ -79,6 +120,12 @@ class MainActivity : AppCompatActivity() {
                 .putInt("max_tokens", b.sliderTokens.value.toInt())
                 .apply()
             Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
+        }
+        b.btnDownloadModel.setOnClickListener {
+            downloadModel()
+        }
+        b.btnLoadModel.setOnClickListener {
+            loadModel()
         }
     }
 
@@ -109,5 +156,117 @@ class MainActivity : AppCompatActivity() {
         val am = getSystemService(AccessibilityManager::class.java)
         return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .any { it.resolveInfo.serviceInfo.packageName == packageName }
+    }
+
+    private fun getModelPath(): String {
+        return File(filesDir, "gemma-2b-it-q4_0.gguf").absolutePath
+    }
+
+    private fun updateModelStatus() {
+        val modelFile = File(getModelPath())
+        val exists = modelFile.exists()
+        val isLoaded = inferenceService?.isModelLoaded() ?: false
+
+        b.tvModelStatus.text = when {
+            isLoaded -> "✓ 已載入"
+            exists -> "已下載"
+            else -> "未下載"
+        }
+        b.tvModelStatus.setTextColor(
+            when {
+                isLoaded -> 0xFF03DAC5.toInt()
+                exists -> 0xFFFFA726.toInt()
+                else -> 0xFFFF6B6B.toInt()
+            }
+        )
+        b.btnDownloadModel.visibility = if (exists) View.GONE else View.VISIBLE
+        b.btnLoadModel.visibility = if (exists && !isLoaded) View.VISIBLE else View.GONE
+    }
+
+    private fun downloadModel() {
+        b.btnDownloadModel.isEnabled = false
+        b.progressDownload.visibility = View.VISIBLE
+        b.tvDownloadProgress.visibility = View.VISIBLE
+        b.tvDownloadProgress.text = "準備下載..."
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Using HuggingFace model URL for Gemma 2B quantized
+                val url = "https://huggingface.co/lmstudio-community/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf"
+                val request = Request.Builder().url(url).build()
+                val response = http.newCall(request).execute()
+
+                if (!response.isSuccessful) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "下載失敗: ${response.code}", Toast.LENGTH_SHORT).show()
+                        b.btnDownloadModel.isEnabled = true
+                        b.progressDownload.visibility = View.GONE
+                        b.tvDownloadProgress.visibility = View.GONE
+                    }
+                    return@launch
+                }
+
+                val totalBytes = response.body?.contentLength() ?: 0
+                val outputFile = File(getModelPath())
+                val inputStream = response.body?.byteStream()
+                val outputStream = FileOutputStream(outputFile)
+
+                val buffer = ByteArray(8192)
+                var downloadedBytes = 0L
+                var bytesRead: Int
+
+                while (inputStream?.read(buffer).also { bytesRead = it ?: -1 } != -1) {
+                    outputStream.write(buffer, 0, bytesRead)
+                    downloadedBytes += bytesRead
+
+                    val progress = if (totalBytes > 0) {
+                        (downloadedBytes * 100 / totalBytes).toInt()
+                    } else 0
+
+                    withContext(Dispatchers.Main) {
+                        b.progressDownload.progress = progress
+                        val mb = downloadedBytes / (1024 * 1024)
+                        val totalMb = totalBytes / (1024 * 1024)
+                        b.tvDownloadProgress.text = "已下載: ${mb}MB / ${totalMb}MB ($progress%)"
+                    }
+                }
+
+                outputStream.close()
+                inputStream?.close()
+
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "✓ 模型下載完成", Toast.LENGTH_SHORT).show()
+                    b.progressDownload.visibility = View.GONE
+                    b.tvDownloadProgress.visibility = View.GONE
+                    b.btnDownloadModel.isEnabled = true
+                    updateModelStatus()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "下載錯誤: ${e.message}", Toast.LENGTH_LONG).show()
+                    b.btnDownloadModel.isEnabled = true
+                    b.progressDownload.visibility = View.GONE
+                    b.tvDownloadProgress.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    private fun loadModel() {
+        b.btnLoadModel.isEnabled = false
+        b.btnLoadModel.text = "載入中..."
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                inferenceService?.loadModel(getModelPath())
+                Toast.makeText(this@MainActivity, "✓ 模型已載入", Toast.LENGTH_SHORT).show()
+                updateModelStatus()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "載入失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                b.btnLoadModel.isEnabled = true
+                b.btnLoadModel.text = "載入模型"
+            }
+        }
     }
 }

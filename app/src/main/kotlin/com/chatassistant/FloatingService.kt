@@ -10,12 +10,16 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.os.Build
+import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.AlarmClock
@@ -39,6 +43,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -75,6 +82,21 @@ class FloatingService : Service() {
     private var inputTop = 0
     private var screenH = 0
     private var isExpanded = true
+    private var inferenceService: InferenceService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as InferenceService.LocalBinder
+            inferenceService = binder.getService()
+            isBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            inferenceService = null
+            isBound = false
+        }
+    }
 
     data class Ai(val replies: List<String>, val actions: List<Act>)
     data class Act(
@@ -90,6 +112,11 @@ class FloatingService : Service() {
         notif()
         screenH = resources.displayMetrics.heightPixels
         buildOverlay()
+
+        // Bind to InferenceService
+        Intent(this, InferenceService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
 
     override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
@@ -112,6 +139,10 @@ class FloatingService : Service() {
     override fun onBind(i: Intent?) = null
 
     override fun onDestroy() {
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
         scope.cancel()
         runCatching { wm.removeView(root) }
         super.onDestroy()
@@ -229,9 +260,14 @@ class FloatingService : Service() {
         actionRow.removeAllViews()
         scope.launch {
             val cal = calCtx()
-            val result = withContext(Dispatchers.IO) { callLlm(chat, pkg, cal) }
+            val useLocal = inferenceService?.isModelLoaded() == true
+            val result = if (useLocal) {
+                callLocalLlm(chat, pkg, cal)
+            } else {
+                withContext(Dispatchers.IO) { callLlm(chat, pkg, cal) }
+            }
             loadingBar.visibility = View.GONE
-            statusLabel.text = "✦ AI 回覆助理"
+            statusLabel.text = if (useLocal) "✦ 本地 AI" else "✦ AI 回覆助理"
             render(result)
         }
     }
@@ -300,6 +336,54 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
             }
             Ai(rep, acts)
         }.getOrElse { fallback() }
+    }
+
+    private suspend fun callLocalLlm(chat: String, pkg: String, cal: String): Ai {
+        return withContext(Dispatchers.IO) {
+            try {
+                val app = mapOf(
+                    "com.tencent.mm" to "WeChat",
+                    "com.linecorp.line" to "LINE",
+                    "jp.naver.line.android" to "LINE",
+                    "org.telegram.messenger" to "Telegram",
+                    "com.whatsapp" to "WhatsApp",
+                    "com.facebook.orca" to "Messenger",
+                    "com.instagram.android" to "Instagram",
+                    "com.discord" to "Discord"
+                )[pkg] ?: "Chat"
+
+                val message = "$app 對話：\n$chat\n\n日曆：$cal"
+                val responseBuilder = StringBuilder()
+
+                inferenceService?.sendPrompt(message, prefs.getInt("max_tokens", 256))
+                    ?.catch { e ->
+                        e.printStackTrace()
+                    }
+                    ?.onCompletion {
+                        // Flow completed
+                    }
+                    ?.collect { token ->
+                        responseBuilder.append(token)
+                    }
+
+                val response = responseBuilder.toString().trim()
+                if (response.isEmpty()) return@withContext fallback()
+
+                // Try to extract JSON from the response
+                val jsonStart = response.indexOf("{")
+                val jsonEnd = response.lastIndexOf("}") + 1
+                val jsonContent = if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    response.substring(jsonStart, jsonEnd)
+                } else {
+                    response
+                }
+
+                parseAi(jsonContent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                fallback()
+            }
+        }
     }
 
     private fun fallback() = Ai(listOf("好的", "收到！", "了解 👍"), emptyList())
