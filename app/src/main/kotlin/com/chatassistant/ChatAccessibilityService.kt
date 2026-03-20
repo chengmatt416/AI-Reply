@@ -3,8 +3,10 @@ package com.chatassistant
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Rect
+import android.os.Build
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.content.ContextCompat
 
 class ChatAccessibilityService : AccessibilityService() {
     companion object {
@@ -99,8 +101,16 @@ class ChatAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun startOverlayService(intent: Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(this, intent)
+        } else {
+            startService(intent)
+        }
+    }
+
     private fun sendPos(top: Int, bot: Int, pkg: String) =
-        startService(Intent(this, FloatingService::class.java).apply {
+        startOverlayService(Intent(this, FloatingService::class.java).apply {
             action = ACTION_UPDATE_POS
             putExtra("input_top", top)
             putExtra("input_bottom", bot)
@@ -108,7 +118,7 @@ class ChatAccessibilityService : AccessibilityService() {
         })
 
     private fun sendContent(c: String, pkg: String) =
-        startService(Intent(this, FloatingService::class.java).apply {
+        startOverlayService(Intent(this, FloatingService::class.java).apply {
             action = ACTION_NEW_CONTENT
             putExtra("content", c)
             putExtra("pkg", pkg)
