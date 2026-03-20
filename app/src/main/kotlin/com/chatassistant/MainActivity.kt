@@ -5,7 +5,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
@@ -13,6 +15,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.chatassistant.databinding.ActivityMainBinding
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +29,9 @@ import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 100
+    }
     private lateinit var b: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("assistant_prefs", MODE_PRIVATE) }
     private val http = OkHttpClient.Builder()
@@ -59,10 +65,18 @@ class MainActivity : AppCompatActivity() {
         setupListeners()
         checkStatuses()
 
+        // Request runtime permissions
+        requestNecessaryPermissions()
+
         // Bind to InferenceService
         Intent(this, InferenceService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
+
+        // Start context indexing service
+        startService(Intent(this, ContextIndexService::class.java).apply {
+            action = ContextIndexService.ACTION_GENERATE_INDEX
+        })
     }
 
     override fun onDestroy() {
@@ -266,6 +280,53 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 b.btnLoadModel.isEnabled = true
                 b.btnLoadModel.text = "載入模型"
+            }
+        }
+    }
+
+    private fun requestNecessaryPermissions() {
+        val permissions = mutableListOf<String>()
+
+        // Check for storage/media permissions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_MEDIA_IMAGES)
+                != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(android.Manifest.permission.READ_MEDIA_IMAGES)
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        }
+
+        // Check for calendar permissions
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(android.Manifest.permission.READ_CALENDAR)
+        }
+
+        if (permissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+            if (allGranted) {
+                Toast.makeText(this, "✓ 權限已授予", Toast.LENGTH_SHORT).show()
+                // Restart context indexing after permissions granted
+                startService(Intent(this, ContextIndexService::class.java).apply {
+                    action = ContextIndexService.ACTION_GENERATE_INDEX
+                })
+            } else {
+                Toast.makeText(this, "需要權限以啟用完整功能", Toast.LENGTH_LONG).show()
             }
         }
     }
