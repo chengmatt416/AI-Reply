@@ -2,9 +2,8 @@ package com.chatassistant.llama.internal
 
 import android.content.Context
 import android.util.Log
-import com.arm.aichat.InferenceEngine
-import com.arm.aichat.UnsupportedArchitectureException
-import com.arm.aichat.internal.InferenceEngineImpl.Companion.getInstance
+import com.chatassistant.llama.InferenceEngine
+import com.chatassistant.llama.UnsupportedArchitectureException
 import dalvik.annotation.optimization.FastNative
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
