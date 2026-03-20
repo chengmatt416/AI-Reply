@@ -1,7 +1,7 @@
 package com.chatassistant.llama
 
 import android.content.Context
-import com.arm.aichat.internal.InferenceEngineImpl
+import com.chatassistant.llama.internal.InferenceEngineImpl
 
 /**
  * Main entry point for Arm's AI Chat library.

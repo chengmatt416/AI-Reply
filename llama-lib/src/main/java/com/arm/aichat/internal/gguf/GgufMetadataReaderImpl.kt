@@ -2,9 +2,9 @@ package com.chatassistant.llama.internal.gguf
 
 import android.content.Context
 import android.net.Uri
-import com.arm.aichat.gguf.GgufMetadata
-import com.arm.aichat.gguf.GgufMetadataReader
-import com.arm.aichat.gguf.InvalidFileFormatException
+import com.chatassistant.llama.gguf.GgufMetadata
+import com.chatassistant.llama.gguf.GgufMetadataReader
+import com.chatassistant.llama.gguf.InvalidFileFormatException
 import java.io.File
 import java.io.IOException
 import java.io.InputStream

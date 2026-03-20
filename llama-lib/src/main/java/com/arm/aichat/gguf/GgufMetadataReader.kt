@@ -2,7 +2,7 @@ package com.chatassistant.llama.gguf
 
 import android.content.Context
 import android.net.Uri
-import com.arm.aichat.internal.gguf.GgufMetadataReaderImpl
+import com.chatassistant.llama.internal.gguf.GgufMetadataReaderImpl
 import java.io.File
 import java.io.IOException
 import java.io.InputStream

@@ -30,7 +30,10 @@ if(DEFINED ANDROID_ABI)
     endif()
 endif()
 
-set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../../llama.cpp)
+set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../llama.cpp)
+if(NOT EXISTS "${LLAMA_SRC}/CMakeLists.txt")
+    message(FATAL_ERROR "llama.cpp submodule not found at ${LLAMA_SRC}. Run `git submodule update --init --recursive`.")
+endif()
 add_subdirectory(${LLAMA_SRC} build-llama)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
