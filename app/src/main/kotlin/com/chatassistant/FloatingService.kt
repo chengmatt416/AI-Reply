@@ -10,12 +10,16 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.os.Build
+import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.AlarmClock
@@ -39,6 +43,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -75,8 +82,24 @@ class FloatingService : Service() {
     private var inputTop = 0
     private var screenH = 0
     private var isExpanded = true
+    private var inferenceService: InferenceService? = null
+    private var isBound = false
+    private lateinit var contextIndexer: ContextIndexer
 
-    data class Ai(val replies: List<String>, val actions: List<Act>)
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as InferenceService.LocalBinder
+            inferenceService = binder.getService()
+            isBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            inferenceService = null
+            isBound = false
+        }
+    }
+
+    data class Ai(val replies: List<String>, val actions: List<Act>, val suggestions: List<Suggest> = emptyList())
     data class Act(
         val type: String,
         val title: String = "",
@@ -84,12 +107,27 @@ class FloatingService : Service() {
         val time: String = "",
         val label: String = ""
     )
+    data class Suggest(
+        val type: String,
+        val text: String
+    )
 
     override fun onCreate() {
         super.onCreate()
         notif()
         screenH = resources.displayMetrics.heightPixels
         buildOverlay()
+        contextIndexer = ContextIndexer(applicationContext)
+
+        // Bind to InferenceService
+        Intent(this, InferenceService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+
+        // Generate initial index if needed
+        scope.launch {
+            contextIndexer.generateDailyIndex()
+        }
     }
 
     override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
@@ -112,6 +150,10 @@ class FloatingService : Service() {
     override fun onBind(i: Intent?) = null
 
     override fun onDestroy() {
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
         scope.cancel()
         runCatching { wm.removeView(root) }
         super.onDestroy()
@@ -229,14 +271,20 @@ class FloatingService : Service() {
         actionRow.removeAllViews()
         scope.launch {
             val cal = calCtx()
-            val result = withContext(Dispatchers.IO) { callLlm(chat, pkg, cal) }
+            val contextSummary = contextIndexer.getContextSummary()
+            val useLocal = inferenceService?.isModelLoaded() == true
+            val result = if (useLocal) {
+                callLocalLlm(chat, pkg, cal, contextSummary)
+            } else {
+                withContext(Dispatchers.IO) { callLlm(chat, pkg, cal, contextSummary) }
+            }
             loadingBar.visibility = View.GONE
-            statusLabel.text = "✦ AI 回覆助理"
+            statusLabel.text = if (useLocal) "✦ 本地 AI" else "✦ AI 回覆助理"
             render(result)
         }
     }
 
-    private fun callLlm(chat: String, pkg: String, cal: String): Ai {
+    private fun callLlm(chat: String, pkg: String, cal: String, context: String): Ai {
         val app = mapOf(
             "com.tencent.mm" to "WeChat",
             "com.linecorp.line" to "LINE",
@@ -248,9 +296,11 @@ class FloatingService : Service() {
             "com.discord" to "Discord"
         )[pkg] ?: "Chat"
         val sys = """你是智慧回覆助理。日曆：$cal
-輸出嚴格JSON（不含markdown）：{"replies":["回覆1","回覆2","回覆3"],"actions":[]}
+$context
+輸出嚴格JSON（不含markdown）：{"replies":["回覆1","回覆2","回覆3"],"actions":[],"suggestions":[]}
 actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_calendar","title":"","date":"yyyy-MM-dd","time":"HH:mm"}
-僅在明確提到時間/行程時才填actions，否則[]。replies語言跟對話一致，簡短自然。"""
+suggestions格式：{"type":"photo","text":"分享照片"}或{"type":"calendar","text":"加入行程"}
+僅在明確提到時間/行程時才填actions，否則[]。可以主動建議相關照片或行程。replies語言跟對話一致，簡短自然。"""
         val body = JSONObject().apply {
             put("messages", JSONArray().apply {
                 put(JSONObject().put("role", "system").put("content", sys))
@@ -298,8 +348,68 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
                     )
                 }
             }
-            Ai(rep, acts)
+            val suggestions = mutableListOf<Suggest>()
+            o.optJSONArray("suggestions")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val s = arr.optJSONObject(i) ?: continue
+                    suggestions.add(
+                        Suggest(
+                            s.optString("type"),
+                            s.optString("text")
+                        )
+                    )
+                }
+            }
+            Ai(rep, acts, suggestions)
         }.getOrElse { fallback() }
+    }
+
+    private suspend fun callLocalLlm(chat: String, pkg: String, cal: String, context: String): Ai {
+        return withContext(Dispatchers.IO) {
+            try {
+                val app = mapOf(
+                    "com.tencent.mm" to "WeChat",
+                    "com.linecorp.line" to "LINE",
+                    "jp.naver.line.android" to "LINE",
+                    "org.telegram.messenger" to "Telegram",
+                    "com.whatsapp" to "WhatsApp",
+                    "com.facebook.orca" to "Messenger",
+                    "com.instagram.android" to "Instagram",
+                    "com.discord" to "Discord"
+                )[pkg] ?: "Chat"
+
+                val message = "$app 對話：\n$chat\n\n日曆：$cal\n$context"
+                val responseBuilder = StringBuilder()
+
+                inferenceService?.sendPrompt(message, prefs.getInt("max_tokens", 256))
+                    ?.catch { e ->
+                        e.printStackTrace()
+                    }
+                    ?.onCompletion {
+                        // Flow completed
+                    }
+                    ?.collect { token ->
+                        responseBuilder.append(token)
+                    }
+
+                val response = responseBuilder.toString().trim()
+                if (response.isEmpty()) return@withContext fallback()
+
+                // Try to extract JSON from the response
+                val jsonStart = response.indexOf("{")
+                val jsonEnd = response.lastIndexOf("}") + 1
+                val jsonContent = if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    response.substring(jsonStart, jsonEnd)
+                } else {
+                    response
+                }
+
+                parseAi(jsonContent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                fallback()
+            }
+        }
     }
 
     private fun fallback() = Ai(listOf("好的", "收到！", "了解 👍"), emptyList())
@@ -343,7 +453,7 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
                 .setInterpolator(DecelerateInterpolator())
                 .start()
         }
-        actionRow.visibility = if (ai.actions.isEmpty()) View.GONE else View.VISIBLE
+        actionRow.visibility = if (ai.actions.isEmpty() && ai.suggestions.isEmpty()) View.GONE else View.VISIBLE
         ai.actions.forEachIndexed { i, act ->
             val (em, lbl) = when (act.type) {
                 "add_calendar" -> "📅" to "加入日曆：${act.title} ${act.date} ${act.time}"
@@ -373,6 +483,40 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
             row.animate()
                 .alpha(1f)
                 .setStartDelay(((ai.replies.size + i) * 60).toLong())
+                .setDuration(200)
+                .start()
+        }
+
+        // Add suggestions
+        ai.suggestions.forEachIndexed { i, sugg ->
+            val (em, lbl) = when (sugg.type) {
+                "photo" -> "📸" to sugg.text
+                "calendar" -> "📅" to sugg.text
+                else -> "💡" to sugg.text
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(14.dp(), 10.dp(), 14.dp(), 10.dp())
+                background = rounded(0x2000BCD4, 0x4000BCD4, 16.dp().toFloat())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = 5.dp() }
+                addView(TextView(context).apply { text = em; textSize = 16f; setPadding(0, 0, 10.dp(), 0) })
+                addView(TextView(context).apply {
+                    text = lbl
+                    textSize = 12.5f
+                    setTextColor(0xCC00BCD4.toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                setOnClickListener { handleSuggestion(sugg) }
+            }
+            actionRow.addView(row)
+            row.alpha = 0f
+            row.animate()
+                .alpha(1f)
+                .setStartDelay(((ai.replies.size + ai.actions.size + i) * 60).toLong())
                 .setDuration(200)
                 .start()
         }
@@ -476,6 +620,49 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
         when (a.type) {
             "add_alarm" -> addAlarm(a)
             "add_calendar" -> addCal(a)
+        }
+    }
+
+    private fun handleSuggestion(sugg: Suggest) {
+        scope.launch {
+            when (sugg.type) {
+                "photo" -> showPhotoSuggestions()
+                "calendar" -> showCalendarSuggestions()
+                else -> Toast.makeText(this@FloatingService, sugg.text, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private suspend fun showPhotoSuggestions() {
+        val index = contextIndexer.readTodayIndex()
+        val photos = index?.optJSONArray("photos")
+
+        if (photos != null && photos.length() > 0) {
+            // Copy recent photo info to clipboard
+            val photo = photos.optJSONObject(0)
+            val photoInfo = photo?.let {
+                "${it.optString("name")} - ${it.optString("date")}"
+            } ?: ""
+            copyText("最近照片: $photoInfo")
+            Toast.makeText(this, "📸 照片資訊已複製", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "無最近照片", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private suspend fun showCalendarSuggestions() {
+        val index = contextIndexer.readTodayIndex()
+        val events = index?.optJSONArray("calendar_events")
+
+        if (events != null && events.length() > 0) {
+            val event = events.optJSONObject(0)
+            val eventInfo = event?.let {
+                "${it.optString("title")} - ${it.optString("start")}"
+            } ?: ""
+            copyText("近期行程: $eventInfo")
+            Toast.makeText(this, "📅 行程資訊已複製", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "無近期行程", Toast.LENGTH_SHORT).show()
         }
     }
 
