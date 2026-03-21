@@ -69,19 +69,19 @@ interface InferenceEngine {
     }
 }
 
-val State.isUninterruptible
-    get() = this is State.Initializing ||
-        this is State.LoadingModel ||
-        this is State.UnloadingModel ||
-        this is State.Benchmarking ||
-        this is State.ProcessingSystemPrompt ||
-        this is State.ProcessingUserPrompt
+val InferenceEngine.State.isUninterruptible
+    get() = this is InferenceEngine.State.Initializing ||
+        this is InferenceEngine.State.LoadingModel ||
+        this is InferenceEngine.State.UnloadingModel ||
+        this is InferenceEngine.State.Benchmarking ||
+        this is InferenceEngine.State.ProcessingSystemPrompt ||
+        this is InferenceEngine.State.ProcessingUserPrompt
 
-val State.isModelLoaded: Boolean
-    get() = this is State.ModelReady ||
-        this is State.Benchmarking ||
-        this is State.ProcessingSystemPrompt ||
-        this is State.ProcessingUserPrompt ||
-        this is State.Generating
+val InferenceEngine.State.isModelLoaded: Boolean
+    get() = this is InferenceEngine.State.ModelReady ||
+        this is InferenceEngine.State.Benchmarking ||
+        this is InferenceEngine.State.ProcessingSystemPrompt ||
+        this is InferenceEngine.State.ProcessingUserPrompt ||
+        this is InferenceEngine.State.Generating
 
 class UnsupportedArchitectureException : Exception()
