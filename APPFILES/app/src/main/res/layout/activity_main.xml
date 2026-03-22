@@ -1,0 +1,460 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#080B14"
+    android:fitsSystemWindows="true">
+
+    <View
+        android:layout_width="300dp"
+        android:layout_height="300dp"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="-80dp"
+        android:alpha="0.25"
+        android:background="@drawable/bg_glow_purple"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingTop="24dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:paddingBottom="28dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Chat"
+                android:textColor="#FFA78BFA"
+                android:textSize="34sp"
+                android:fontFamily="sans-serif-medium"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Assistant"
+                android:textColor="#FFFFFFFF"
+                android:textSize="34sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginTop="-8dp"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="由 Gemma 2B 驅動的本地 AI 回覆助理"
+                android:textColor="#80FFFFFF"
+                android:textSize="13sp"
+                android:layout_marginTop="6dp"/>
+        </LinearLayout>
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingHorizontal="16dp"
+            android:clipToPadding="false">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="32dp">
+
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    app:cardBackgroundColor="#0DFFFFFF"
+                    app:cardCornerRadius="20dp"
+                    app:strokeColor="#1AFFFFFF"
+                    app:strokeWidth="1dp"
+                    app:cardElevation="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="系統狀態"
+                                android:textColor="#FFFFFFFF"
+                                android:textSize="15sp"
+                                android:fontFamily="sans-serif-medium"/>
+
+                            <View
+                                android:id="@+id/dotLlm"
+                                android:layout_width="8dp"
+                                android:layout_height="8dp"
+                                android:background="@drawable/dot_red"/>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="16dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="🤖  LLM 伺服器"
+                                android:textColor="#B3FFFFFF"
+                                android:textSize="13sp"/>
+
+                            <TextView
+                                android:id="@+id/tvLlmStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="未連線"
+                                android:textColor="#FF6B6B"
+                                android:textSize="12sp"/>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="10dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="♿  無障礙服務"
+                                android:textColor="#B3FFFFFF"
+                                android:textSize="13sp"/>
+
+                            <TextView
+                                android:id="@+id/tvAccessStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="未開啟"
+                                android:textColor="#FF6B6B"
+                                android:textSize="12sp"/>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="10dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="🪟  浮動視窗權限"
+                                android:textColor="#B3FFFFFF"
+                                android:textSize="13sp"/>
+
+                            <TextView
+                                android:id="@+id/tvOverlayStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="未授權"
+                                android:textColor="#FF6B6B"
+                                android:textSize="12sp"/>
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnCheckStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:layout_marginTop="16dp"
+                            android:text="重新檢查狀態"
+                            android:textSize="13sp"
+                            app:cornerRadius="12dp"
+                            app:backgroundTint="#26A78BFA"
+                            app:strokeColor="#4DA78BFA"
+                            app:strokeWidth="1dp"/>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    app:cardBackgroundColor="#0DFFFFFF"
+                    app:cardCornerRadius="20dp"
+                    app:strokeColor="#1AFFFFFF"
+                    app:strokeWidth="1dp"
+                    app:cardElevation="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="快速設定"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginBottom="16dp"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnOverlayPerm"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:layout_marginBottom="10dp"
+                            android:text="① 授予浮動視窗權限"
+                            android:textColor="#A78BFA"
+                            app:cornerRadius="14dp"
+                            app:strokeColor="#4DA78BFA"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAccessibility"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:layout_marginBottom="10dp"
+                            android:text="② 開啟無障礙服務"
+                            android:textColor="#A78BFA"
+                            app:cornerRadius="14dp"
+                            app:strokeColor="#4DA78BFA"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnStartService"
+                            android:layout_width="match_parent"
+                            android:layout_height="52dp"
+                            android:text="③ 啟動助理服務"
+                            android:textSize="14sp"
+                            android:fontFamily="sans-serif-medium"
+                            app:cornerRadius="14dp"
+                            app:backgroundTint="#A78BFA"/>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    app:cardBackgroundColor="#0DFFFFFF"
+                    app:cardCornerRadius="20dp"
+                    app:strokeColor="#1AFFFFFF"
+                    app:strokeWidth="1dp"
+                    app:cardElevation="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="本地模型"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginBottom="8dp"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="使用裝置端 AI 模型，無需網路連線"
+                            android:textColor="#80FFFFFF"
+                            android:textSize="11sp"
+                            android:layout_marginBottom="16dp"/>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="10dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="🧠  模型狀態"
+                                android:textColor="#B3FFFFFF"
+                                android:textSize="13sp"/>
+
+                            <TextView
+                                android:id="@+id/tvModelStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="未下載"
+                                android:textColor="#FF6B6B"
+                                android:textSize="12sp"/>
+                        </LinearLayout>
+
+                        <ProgressBar
+                            android:id="@+id/progressDownload"
+                            style="?android:attr/progressBarStyleHorizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="12dp"
+                            android:progressTint="#A78BFA"
+                            android:visibility="gone"/>
+
+                        <TextView
+                            android:id="@+id/tvDownloadProgress"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text=""
+                            android:textColor="#80FFFFFF"
+                            android:textSize="11sp"
+                            android:layout_marginBottom="12dp"
+                            android:visibility="gone"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnDownloadModel"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:text="下載 Gemma 2B 模型"
+                            android:textSize="13sp"
+                            app:cornerRadius="14dp"
+                            app:backgroundTint="#26A78BFA"
+                            app:strokeColor="#4DA78BFA"
+                            app:strokeWidth="1dp"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnLoadModel"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:layout_marginTop="8dp"
+                            android:text="載入模型"
+                            android:textSize="13sp"
+                            android:visibility="gone"
+                            app:cornerRadius="14dp"
+                            app:backgroundTint="#A78BFA"/>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardBackgroundColor="#0DFFFFFF"
+                    app:cardCornerRadius="20dp"
+                    app:strokeColor="#1AFFFFFF"
+                    app:strokeWidth="1dp"
+                    app:cardElevation="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="進階設定"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginBottom="16dp"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="LLM 伺服器位址"
+                            android:textColor="#80FFFFFF"
+                            android:textSize="11sp"
+                            android:layout_marginBottom="4dp"/>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="16dp"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                            app:boxCornerRadiusBottomEnd="12dp"
+                            app:boxCornerRadiusBottomStart="12dp"
+                            app:boxCornerRadiusTopEnd="12dp"
+                            app:boxCornerRadiusTopStart="12dp"
+                            app:boxStrokeColor="#33A78BFA"
+                            app:hintTextColor="#80FFFFFF">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etServerUrl"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="http://127.0.0.1:8080"
+                                android:textColor="#FFFFFFFF"
+                                android:textSize="13sp"
+                                android:fontFamily="monospace"
+                                android:inputType="textUri"/>
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="6dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="最大 Token 數"
+                                android:textColor="#80FFFFFF"
+                                android:textSize="11sp"/>
+
+                            <TextView
+                                android:id="@+id/tvTokenCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="256"
+                                android:textColor="#A78BFA"
+                                android:textSize="12sp"/>
+                        </LinearLayout>
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/sliderTokens"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:valueFrom="128"
+                            android:valueTo="512"
+                            android:value="256"
+                            android:stepSize="64"
+                            app:thumbColor="#A78BFA"
+                            app:trackColorActive="#A78BFA"
+                            app:trackColorInactive="#33A78BFA"
+                            android:layout_marginBottom="16dp"/>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnSaveSettings"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:text="儲存設定"
+                            app:cornerRadius="12dp"
+                            app:backgroundTint="#26A78BFA"
+                            app:strokeColor="#4DA78BFA"
+                            app:strokeWidth="1dp"/>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
