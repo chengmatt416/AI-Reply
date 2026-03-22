@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chat Assistant</string>
+    <string name="accessibility_service_label">Chat Assistant 無障礙服務</string>
+    <string name="accessibility_desc">自動讀取聊天並生成 AI 回覆建議</string>
+</resources>
