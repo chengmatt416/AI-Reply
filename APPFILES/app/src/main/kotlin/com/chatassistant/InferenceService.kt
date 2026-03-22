@@ -95,8 +95,7 @@ actions格式：{"type":"add_alarm","time":"HH:mm","label":""}或{"type":"add_ca
     }
 
     fun isModelLoaded(): Boolean {
-        return com.chatassistant.llama.isModelLoaded
-(inferenceEngine.state.value)
+        return inferenceEngine.state.value.isModelLoaded
     }
 
     private fun notif() {
